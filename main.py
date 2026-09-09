@@ -1,5 +1,4 @@
 import os
-import json
 from dotenv import load_dotenv
 from openai import OpenAI
 import argparse
@@ -29,24 +28,43 @@ messages = [
     {"role": "user", "content": args.user_prompt},
 ]
 
-response = client.chat.completions.create(
-    model="openrouter/free",
-    messages=messages,
-    temperature=0,
-    tools=available_functions,
-    tool_choice="required",
+function_name = next(
+    (
+        tool["function"]["name"]
+        for tool in available_functions
+        if tool["function"]["name"] in args.user_prompt
+    ),
+    None,
 )
 
-if args.verbose:
-    print(f"User prompt: {args.user_prompt}")
-    print(f"Prompt tokens: {response.usage.prompt_tokens}")
-    print(f"Response tokens: {response.usage.completion_tokens}")
+for request_number in range(20):
+    tool_choice = "auto"
+    if request_number == 0 and function_name is not None:
+        tool_choice = {
+            "type": "function",
+            "function": {"name": function_name},
+        }
 
-if response.choices[0].message.tool_calls != None:
-    for tool_call in response.choices[0].message.tool_calls:
+    response = client.chat.completions.create(
+        model="openrouter/free",
+        messages=messages,
+        temperature=0,
+        tools=available_functions,
+        tool_choice=tool_choice,
+    )
+    assistant_message = response.choices[0].message
+    messages.append(assistant_message.model_dump(exclude_none=True))
+
+    if args.verbose:
+        print(f"User prompt: {args.user_prompt}")
+        print(f"Prompt tokens: {response.usage.prompt_tokens}")
+        print(f"Response tokens: {response.usage.completion_tokens}")
+
+    if assistant_message.tool_calls is None:
+        print(assistant_message.content)
+        break
+
+    for tool_call in assistant_message.tool_calls:
         result_message = call_function(tool_call, args.verbose)
-        if result_message["content"] != None:
-            print(f"Tool call result: {result_message['content']}")
-        
-else:
-    print(response.choices[0].message.content)
+        messages.append(result_message)
+        print(f"Tool call result: {result_message['content']}")
